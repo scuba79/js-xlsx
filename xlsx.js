@@ -7681,6 +7681,23 @@ function write_ws_xml_cols(ws, cols) {
   return o.join("");
 }
 
+function write_ws_xml_autofilter(data, ws, wb, idx) {
+	var ref = typeof data.ref == "string" ? data.ref : encode_range(data.ref);
+	if(!wb.Workbook) wb.Workbook = {};
+	if(!wb.Workbook.Names) wb.Workbook.Names = [];
+	var names = wb.Workbook.Names;
+	var range = decode_range(ref);
+	if(range.s.r == range.e.r) { range.e.r = decode_range(ws["!ref"]).e.r; ref = encode_range(range); }
+	for(var i = 0; i < names.length; ++i) {
+		var name = names[i];
+		if(name.Name != '_xlnm._FilterDatabase') continue;
+		if(name.Sheet != idx) continue;
+		name.Ref = "'" + wb.SheetNames[idx] + "'!" + ref; break;
+	}
+	if(i == names.length) names.push({ Name: '_xlnm._FilterDatabase', Sheet: idx, Ref: "'" + wb.SheetNames[idx] + "'!" + ref  });
+	return writextag("autoFilter", null, {ref:ref});
+}
+
 function write_ws_xml_cell(cell, ref, ws, opts, idx, wb) {
   if (cell.v === undefined && cell.s === undefined) return "";
   var vv = "";
@@ -7937,6 +7954,8 @@ function write_ws_xml(idx, opts, wb) {
     o[o.length] = ('</sheetData>');
     o[sidx] = o[sidx].replace("/>", ">");
   }
+
+  if(ws['!autofilter'] != null) o[o.length] = write_ws_xml_autofilter(ws['!autofilter'], ws, wb, idx);
 
   if (ws['!merges'] !== undefined && ws['!merges'].length > 0) o[o.length] = (write_ws_xml_merges(ws['!merges']));
 
@@ -8343,20 +8362,25 @@ function write_ws_bin_cell(ba, cell, R, C, opts) {
 	write_record(ba, "BrtCellBlank", write_BrtCellBlank(cell, o));
 }
 
-function write_CELLTABLE(ba, ws, idx, opts, wb) {
+function write_CELLTABLE(ba, ws, idx, opts) {
 	var range = safe_decode_range(ws['!ref'] || "A1"), ref, rr = "", cols = [];
 	write_record(ba, 'BrtBeginSheetData');
-	for(var R = range.s.r; R <= range.e.r; ++R) {
+	var dense = Array.isArray(ws);
+	var cap = range.e.r;
+	if(ws['!rows']) cap = Math.max(range.e.r, ws['!rows'].length - 1);
+	for(var R = range.s.r; R <= cap; ++R) {
 		rr = encode_row(R);
 		/* [ACCELLTABLE] */
 		/* BrtRowHdr */
-		for(var C = range.s.c; C <= range.e.c; ++C) {
+		write_row_header(ba, ws, range, R);
+		if(R <= range.e.r) for(var C = range.s.c; C <= range.e.c; ++C) {
 			/* *16384CELL */
 			if(R === range.s.r) cols[C] = encode_col(C);
 			ref = cols[C] + rr;
-			if(!ws[ref]) continue;
+			var cell = dense ? (ws[R]||[])[C] : ws[ref];
+			if(!cell) continue;
 			/* write cell */
-			write_ws_bin_cell(ba, ws[ref], R, C, opts);
+			write_ws_bin_cell(ba, cell, R, C, opts, ws);
 		}
 	}
 	write_record(ba, 'BrtEndSheetData');
